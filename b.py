@@ -3,16 +3,16 @@ import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
-token = "account-token"
-target_id = "guild id or user id for dm" 
+token = "user-token"
+target_id = "target-id" 
 
 # configure what to delete [set True to enable, False to disable each type]
 delete_config = {
-    "images": False,      # jpg, jpeg, png, gif ..
+    "images": True,      # jpg, jpeg, png, gif ..
     "videos": False,      # mp4, mov ...
     "audio": False,      # mp3, wav, ogg ..
     "voice": False,      # voice messages
-    "messages": False    # text messages
+    "messages": True    # text messages
 }
 
 headers = {
@@ -38,10 +38,54 @@ def checkdm(userid):
         return resp.json()['id']
     return None
 
+def checkchannel(channelid):
+    resp = requests.get(f"{base_url}/channels/{channelid}", headers=headers)
+    if resp.status_code == 200:
+        return resp.json()
+    return None
+
 def checkguild(guildid):
     resp = requests.get(f"{base_url}/guilds/{guildid}", headers=headers)
     if resp.status_code == 200:
         return resp.json()['name']
+    return None
+
+def resolvetarget(targetid):
+    channel = checkchannel(targetid)
+    if channel and channel.get('type') in (1, 3):
+        recipients = channel.get('recipients', [])
+        if recipients:
+            targetname = ", ".join(user.get('username', 'unknown') for user in recipients)
+        else:
+            targetname = "dm"
+        return {
+            'channel_id': channel['id'],
+            'target_name': f"dm with {targetname}",
+            'target_type': 'dm'
+        }
+
+    dmchannel = checkdm(targetid)
+    if dmchannel:
+        user = checkchannel(dmchannel)
+        recipients = user.get('recipients', []) if user else []
+        if recipients:
+            targetname = ", ".join(member.get('username', 'unknown') for member in recipients)
+        else:
+            targetname = "dm"
+        return {
+            'channel_id': dmchannel,
+            'target_name': f"dm with {targetname}",
+            'target_type': 'dm'
+        }
+
+    guildname = checkguild(targetid)
+    if guildname:
+        return {
+            'channel_id': None,
+            'target_name': guildname,
+            'target_type': 'guild'
+        }
+
     return None
 
 def searchmedia(channelid, authorid, offset=0):
@@ -312,21 +356,13 @@ def main():
         userid = userinfo['id']
         username = userinfo['username']
         print(f"logged in as {username}")
-        isdm = len(target_id) < 19
-        channelid = None
-        targetname = None
+        resolvedtarget = resolvetarget(target_id)
+        if not resolvedtarget:
+            print("target not found (use a guild id, a user id for DM, or a DM channel id)")
+            return
         
-        if isdm:
-            channelid = checkdm(target_id)
-            if not channelid:
-                print("dm channel not found")
-                return
-            targetname = "dm"
-        else:
-            targetname = checkguild(target_id)
-            if not targetname:
-                print("guild not found")
-                return
+        channelid = resolvedtarget['channel_id']
+        targetname = resolvedtarget['target_name']
         
         print(f"target: {targetname}")
         print("starting deletion process...")
